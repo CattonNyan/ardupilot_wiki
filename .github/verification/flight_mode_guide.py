@@ -243,8 +243,17 @@ def smoke(firmware):
 
             def available(blocked):
                 send_command(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
-                             mavutil.mavlink.MAVLINK_MSG_ID_AVAILABLE_MODES, 0)
-                message = wait_for("AVAILABLE_MODES", lambda m: m.custom_mode == number)
+                             mavutil.mavlink.MAVLINK_MSG_ID_AVAILABLE_MODES, 1)
+                first = wait_for("AVAILABLE_MODES", lambda m: m.mode_index == 1)
+                found = []
+                for index in range(2, first.number_modes + 1):
+                    send_command(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+                                 mavutil.mavlink.MAVLINK_MSG_ID_AVAILABLE_MODES, index)
+                    item = wait_for("AVAILABLE_MODES", lambda m: m.mode_index == index)
+                    if item.custom_mode == number:
+                        found.append(item)
+                assert len(found) == 1, f"Expected mode {number} once in {first.number_modes} available modes"
+                message = found[0]
                 assert message.mode_name == "NEWMODE", message
                 flag = mavutil.mavlink.MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
                 assert bool(message.properties & flag) == blocked, message
