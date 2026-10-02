@@ -190,11 +190,18 @@ def smoke(firmware):
                     raise RuntimeError("SITL exited during startup")
                 try:
                     connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=255)
+                    # Keep the generated parser even if the first heartbeat uses MAVLink 1 framing.
+                    connection.first_byte = False
+                    connection.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS,
+                                                  mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+                                                  0, 0, mavutil.mavlink.MAV_STATE_ACTIVE)
                     break
                 except OSError:
                     time.sleep(1)
             assert connection is not None, "SITL TCP port did not become ready"
             assert connection.wait_heartbeat(timeout=30), "No heartbeat"
+            assert connection.mav.__class__.__module__ == flight_mode_dialect.__name__, connection.mav.__class__
+            print(f"Parser: {connection.mav.__class__.__module__}; wire protocol {connection.WIRE_PROTOCOL_VERSION}")
 
             def drain():
                 while connection.recv_match(blocking=False) is not None:
@@ -209,8 +216,10 @@ def smoke(firmware):
             def wait_for(message_type, predicate, timeout=15):
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
-                    message = connection.recv_match(type=message_type, blocking=True, timeout=1)
-                    if message is not None and predicate(message):
+                    message = connection.recv_match(blocking=True, timeout=1)
+                    if message is not None and message.get_type() in ("COMMAND_ACK", "AVAILABLE_MODES", "BAD_DATA"):
+                        print(f"RECV: {message}")
+                    if message is not None and message.get_type() == message_type and predicate(message):
                         return message
                 raise RuntimeError(f"Timed out waiting for {message_type}")
 
