@@ -16,7 +16,9 @@ def literal_blocks(source):
         start = index + 1
         while start < len(lines) and not lines[start].strip():
             start += 1
-        indent = len(lines[start]) - len(lines[start].lstrip())
+        # A literal block may start with a more deeply indented C++ line.
+        # Its boundary is the directive's indentation, not the first line's.
+        indent = len(line) - len(line.lstrip()) + 1
         end = start
         while end < len(lines):
             current = lines[end]

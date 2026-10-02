@@ -23,7 +23,7 @@ jobs:
         run: pre-commit run --files dev/source/docs/apmcopter-adding-a-new-flight-mode.rst
       - name: Build the developer Wiki
         run: |
-          python update.py --site dev --parallel 2 --destdir "$RUNNER_TEMP/rendered" 2>&1 | tee wiki-build.log
+          python update.py --site dev --parallel 2 2>&1 | tee wiki-build.log
       - name: Check and capture the rendered page
         run: |
           python - <<'PY'
