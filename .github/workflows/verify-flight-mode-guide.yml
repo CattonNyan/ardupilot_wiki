@@ -102,4 +102,5 @@ jobs:
             example-build.log
             smoke-results.log
             sitl-smoke.log
+            firmware/build/sitl/bin/arducopter
           retention-days: 7

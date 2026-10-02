@@ -164,8 +164,15 @@ def smoke(firmware):
     import os
     os.environ["MAVLINK20"] = "1"
     from pymavlink import mavutil
+    from pymavlink.generator.mavgen import Opts, mavgen
 
     firmware = firmware.resolve()
+    # AVAILABLE_MODES is in development.xml at this firmware revision, not ardupilotmega.xml.
+    dialect = Path(__file__).resolve().with_name("flight_mode_dialect")
+    assert mavgen(Opts(str(dialect), wire_protocol="2.0", language="Python", validate=False),
+                  [str(firmware / "modules/mavlink/message_definitions/v1.0/development.xml")])
+    import flight_mode_dialect
+    mavutil.mavlink = flight_mode_dialect
     metadata = json.loads(Path("example-metadata.json").read_text())
     number = metadata["mode_number"]
     block_mask = 1 << metadata["gcs_block_bit"]
@@ -180,8 +187,7 @@ def smoke(firmware):
                 if process.poll() is not None:
                     raise RuntimeError("SITL exited during startup")
                 try:
-                    connection = mavutil.mavlink_connection(
-                        "tcp:127.0.0.1:5760", source_system=255, dialect="ardupilotmega")
+                    connection = mavutil.mavlink_connection("tcp:127.0.0.1:5760", source_system=255)
                     break
                 except OSError:
                     time.sleep(1)
