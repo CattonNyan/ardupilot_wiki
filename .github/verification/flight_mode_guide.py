@@ -176,9 +176,11 @@ def smoke(firmware):
     metadata = json.loads(Path("example-metadata.json").read_text())
     number = metadata["mode_number"]
     block_mask = 1 << metadata["gcs_block_bit"]
-    command = [str(firmware / "build/sitl/bin/arducopter"), "-S", "--model", "quad",
+    extra_defaults = Path("sitl-verification.parm").resolve()
+    extra_defaults.write_text("SERIAL0_PROTOCOL 2\n")
+    command = [str(firmware / "build/sitl/bin/arducopter"), "--model", "quad",
                "--speedup", "1", "--home", "-35.362938,149.165085,585,0",
-               "--defaults", str(firmware / "Tools/autotest/default_params/copter.parm")]
+               "--defaults", f"{firmware / 'Tools/autotest/default_params/copter.parm'},{extra_defaults}"]
     with open("sitl-smoke.log", "w") as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
         connection = None
@@ -228,6 +230,7 @@ def smoke(firmware):
             def heartbeat(value):
                 hb = wait_for("HEARTBEAT", lambda m: m.custom_mode == value)
                 assert not hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED, hb
+                assert hb.get_msgbuf()[0] == 253, "Expected MAVLink 2 framing"
 
             def available(blocked):
                 send_command(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
