@@ -1,0 +1,98 @@
+name: Verify Copter flight mode guide
+on:
+  push:
+    branches: [ci/verify-copter-flight-mode-guide]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  documentation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run repository checks on the changed page
+        run: pre-commit run --files dev/source/docs/apmcopter-adding-a-new-flight-mode.rst
+      - name: Build the developer Wiki
+        run: |
+          python update.py --site dev --parallel 2 --destdir "$RUNNER_TEMP/rendered" 2>&1 | tee wiki-build.log
+      - name: Check and capture the rendered page
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          target = Path('dev/build/html/docs/apmcopter-adding-a-new-flight-mode.html').resolve()
+          assert target.exists(), target
+          warnings = [line for line in Path('wiki-build.log').read_text().splitlines()
+                      if 'apmcopter-adding-a-new-flight-mode.rst' in line and ('WARNING:' in line or 'ERROR:' in line)]
+          assert not warnings, '\n'.join(warnings)
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page(viewport={'width': 1440, 'height': 1000})
+              page.goto(target.as_uri())
+              page.screenshot(path='flight-mode-guide.png', full_page=True)
+              for name, text in [('class', 'Number mode_number()'), ('run', 'get_pilot_desired_lean_angles_rad')]:
+                  block = page.locator('div.highlight').filter(has_text=text).first
+                  assert block.count(), text
+                  block.screenshot(path=f'flight-mode-{name}.png')
+              browser.close()
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flight-mode-documentation
+          path: |
+            dev/build/html
+            wiki-build.log
+            flight-mode-*.png
+          retention-days: 7
+  examples:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ArduPilot/ardupilot
+          ref: e8de77a80535df7a78ff78564b35781fba6a5b2f
+          path: firmware
+          submodules: recursive
+      - name: Install SITL prerequisites in the GitHub runner
+        env:
+          SKIP_AP_GRAPHIC_ENV: '1'
+          SKIP_AP_EXT_ENV: '1'
+          SKIP_AP_COV_ENV: '1'
+          SKIP_AP_GIT_CHECK: '1'
+        run: |
+          firmware/Tools/environment_install/install-prereqs-ubuntu.sh -y
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Insert examples extracted from the modified documentation
+        run: |
+          python3 .github/verification/flight_mode_guide.py prepare firmware --guide dev/source/docs/apmcopter-adding-a-new-flight-mode.rst
+          git -C firmware diff > example-verification.patch
+          cp firmware/ArduCopter/mode_newmode.cpp example-mode.cpp
+      - name: Compile the documentation examples in Copter SITL
+        working-directory: firmware
+        run: |
+          ./waf configure --board sitl
+          ./waf copter -j2 2>&1 | tee ../example-build.log
+      - name: Check example mode entry without arming
+        run: python3 .github/verification/flight_mode_guide.py smoke firmware
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flight-mode-examples
+          path: |
+            example-verification.patch
+            example-mode.cpp
+            example-build.log
+            sitl-smoke.log
+          retention-days: 7

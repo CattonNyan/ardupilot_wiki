@@ -1,6 +1,9 @@
 name: Test wiki Linux
 
-on: [push, pull_request]
+on:
+  push:
+    branches-ignore: [ci/verify-copter-flight-mode-guide]
+  pull_request:
 # paths:
 # - "*"
 # - "!README.md" <-- don't rebuild on doc change
