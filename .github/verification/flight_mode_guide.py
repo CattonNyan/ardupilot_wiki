@@ -250,7 +250,11 @@ def smoke(firmware):
                 assert bool(message.properties & flag) == blocked, message
                 print(f"PASS: AVAILABLE_MODES mode {number}, name {message.mode_name}, blocked={blocked}")
 
+            ready = wait_for("HEARTBEAT", lambda m: m.system_status == mavutil.mavlink.MAV_STATE_STANDBY, timeout=60)
+            assert not ready.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+            print(f"SITL initialized: status {ready.system_status}, framing {ready.get_msgbuf()[0]}")
             set_block(0)
+            heartbeat(0)
             available(False)
             mode_command(number, mavutil.mavlink.MAV_RESULT_ACCEPTED)
             heartbeat(number)
