@@ -75,7 +75,10 @@ def prepare(firmware, guide):
     assert number not in map(int, entries.values())
     assert number not in map(int, reserved)
     assert set(reserved) == set(re.findall(r"Mode number (\d+) reserved", enum))
-    assert number == 100
+    assert number == 99
+    flip_script = (firmware / "libraries/AP_Scripting/examples/Flip_Mode.lua").read_text()
+    assert re.search(r"local MODE_NUMBER = 100\b", flip_script)
+    assert number != 100, "Native mode must not collide with the official Lua example"
     # Install the complete documented enum, including reservations.
     header = header[:enum_match.start()] + enum[enum.index("enum class"):].rstrip() + header[enum_match.end():]
     header += "\nclass ModeNewMode : public Mode {\n" + declaration
@@ -118,18 +121,17 @@ def prepare(firmware, guide):
     gcs_file.write_text(append_array(gcs_file.read_text(),
                                    "uint8_t GCS_MAVLINK_Copter::send_available_mode(", available))
 
-    assert blocking == "(uint8_t)Mode::Number::NEW_MODE,"
+    assert blocking == "(uint8_t)Mode::Number::TURTLE,\n(uint8_t)Mode::Number::NEW_MODE,"
     start, end = function_bounds(source, "bool Copter::gcs_mode_enabled(")
     function = source[start:end]
     opening = function.index("{", function.index("mode_list []"))
     closing = brace_end(function, opening) - 1
     bit = len(re.findall(r"\(uint8_t\)Mode::Number::", function[opening:closing]))
     assert bit < 32
-    # The upstream last entry has no trailing comma; preserve existing bit order.
-    prefix = function[:closing].rstrip()
-    if not prefix.endswith(","):
-        prefix += ","
-    function = prefix + "\n        " + blocking + "\n    " + function[closing:]
+    # Install the documented ending verbatim: do not silently repair a missing comma.
+    last = re.search(r"\(uint8_t\)Mode::Number::TURTLE\s*$", function[:closing])
+    assert last, "Upstream array ending changed"
+    function = function[:last.start()] + textwrap.indent(blocking, "        ").lstrip() + "\n    " + function[closing:]
     mode_cpp.write_text(source[:start] + function + source[end:])
 
     vehicle_file = firmware / "libraries/AP_Vehicle/AP_Vehicle.cpp"
@@ -144,7 +146,7 @@ def prepare(firmware, guide):
     start = source.index("    // @Param: FLTMODE1\n")
     end = source.index("    // @Param: FLTMODE3\n", start)
     existing = source[start:end]
-    assert tokens(parameters.replace(",100:NewMode", "")) == tokens(existing)
+    assert tokens(parameters.replace(",99:NewMode", "")) == tokens(existing)
     parameter_file.write_text(source[:start] + textwrap.indent(parameters, "    ") + "\n\n" + source[end:])
 
     # The run excerpt is deliberately shortened, and init is a test-only entry stub.
@@ -177,7 +179,17 @@ def smoke(firmware):
     number = metadata["mode_number"]
     block_mask = 1 << metadata["gcs_block_bit"]
     extra_defaults = Path("sitl-verification.parm").resolve()
-    extra_defaults.write_text("SERIAL0_PROTOCOL 2\n")
+    extra_defaults.write_text("SERIAL0_PROTOCOL 2\nSCR_ENABLE 1\nSCR_HEAP_SIZE 262144\n")
+    scripts = Path("scripts")
+    scripts.mkdir(exist_ok=True)
+    # Run the actual upstream example unchanged alongside native mode 99.
+    (scripts / "Flip_Mode.lua").write_bytes(
+        (firmware / "libraries/AP_Scripting/examples/Flip_Mode.lua").read_bytes())
+    (scripts / "verify_native_collision.lua").write_text(
+        f'local function update()\n'
+        f'  assert(vehicle:register_custom_mode({number}, "Collision", "CLSN") == nil)\n'
+        f'  gcs:send_text(6, "PASS: native mode {number} rejects Lua reuse")\n'
+        f'  return update, 1000\nend\nreturn update()\n')
     command = [str(firmware / "build/sitl/bin/arducopter"), "--model", "quad",
                "--speedup", "1", "--home", "-35.362938,149.165085,585,0",
                "--defaults", f"{firmware / 'Tools/autotest/default_params/copter.parm'},{extra_defaults}"]
@@ -246,22 +258,29 @@ def smoke(firmware):
                              mavutil.mavlink.MAVLINK_MSG_ID_AVAILABLE_MODES, 1)
                 first = wait_for("AVAILABLE_MODES", lambda m: m.mode_index == 1)
                 found = []
+                lua_modes = []
                 for index in range(2, first.number_modes + 1):
                     send_command(mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
                                  mavutil.mavlink.MAVLINK_MSG_ID_AVAILABLE_MODES, index)
                     item = wait_for("AVAILABLE_MODES", lambda m: m.mode_index == index)
                     if item.custom_mode == number:
                         found.append(item)
+                    if item.custom_mode == 100:
+                        lua_modes.append(item)
                 assert len(found) == 1, f"Expected mode {number} once in {first.number_modes} available modes"
                 message = found[0]
                 assert message.mode_name == "NEWMODE", message
                 flag = mavutil.mavlink.MAV_MODE_PROPERTY_NOT_USER_SELECTABLE
                 assert bool(message.properties & flag) == blocked, message
+                assert len(lua_modes) == 1 and lua_modes[0].mode_name == "Flip 2", lua_modes
                 print(f"PASS: AVAILABLE_MODES mode {number}, name {message.mode_name}, blocked={blocked}")
+                print("PASS: unmodified Flip_Mode.lua registered mode 100 alongside native mode 99")
 
             ready = wait_for("HEARTBEAT", lambda m: m.system_status == mavutil.mavlink.MAV_STATE_STANDBY, timeout=60)
             assert not ready.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
             print(f"SITL initialized: status {ready.system_status}, framing {ready.get_msgbuf()[0]}")
+            collision = wait_for("STATUSTEXT", lambda m: m.text == f"PASS: native mode {number} rejects Lua reuse", timeout=30)
+            print(collision.text)
             set_block(0)
             heartbeat(0)
             available(False)

@@ -49,7 +49,8 @@ jobs:
               page.screenshot(path='flight-mode-guide.png', full_page=True)
               for name, text in [('class', 'Number mode_number()'), ('run', 'get_pilot_desired_lean_angles_rad'),
                                  ('instances', 'ModeNewMode mode_newmode;'), ('lookup', 'return &mode_newmode;'),
-                                 ('available', '&copter.mode_newmode,'), ('parameters', '100:NewMode')]:
+                                 ('available', '&copter.mode_newmode,'), ('parameters', '99:NewMode'),
+                                 ('enum', 'NEW_MODE =     99'), ('blocking', '(uint8_t)Mode::Number::TURTLE,')]:
                   block = page.locator('div.highlight').filter(has_text=text).first
                   assert block.count(), text
                   block.screenshot(path=f'flight-mode-{name}.png')
